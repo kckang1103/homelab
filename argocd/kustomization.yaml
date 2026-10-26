@@ -1,0 +1,19 @@
+# Argo CD itself, pinned to one release and trimmed for 4GB nodes.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: argocd
+resources:
+  - namespace.yaml
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.6/manifests/install.yaml
+patches:
+  # No SSO (I log in with the built-in admin account) and no notifications yet.
+  - target: { kind: Deployment, name: argocd-dex-server }
+    patch: |
+      - op: add
+        path: /spec/replicas
+        value: 0
+  - target: { kind: Deployment, name: argocd-notifications-controller }
+    patch: |
+      - op: add
+        path: /spec/replicas
+        value: 0

@@ -1,0 +1,19 @@
+# Argo CD manages its own install. Pruning is off so a bad commit can't delete it.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/kckang1103/homelab.git
+    targetRevision: main
+    path: argocd
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions:
+      - ServerSideApply=true # some Argo CD CRDs are too large for client-side apply

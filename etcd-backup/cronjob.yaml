@@ -1,0 +1,82 @@
+# Takes an etcd snapshot every 6 hours on whichever control plane node runs the
+# job, and saves it with a copy of that node's /etc/kubernetes/pki to
+# /var/backups/etcd on the node. Keeps the newest 8 of each per node.
+# These copies live on the SD card; the off-cluster copy is pulled by the Mac.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: etcd-backup
+  namespace: kube-system
+spec:
+  schedule: "0 */6 * * *"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 300
+      template:
+        spec:
+          # Host network, so 127.0.0.1:2379 is the etcd member on this node.
+          hostNetwork: true
+          restartPolicy: OnFailure
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: ""
+          tolerations:
+            - key: node-role.kubernetes.io/control-plane
+              operator: Exists
+              effect: NoSchedule
+          initContainers:
+            # The etcd image has etcdctl but no shell, so it only takes the snapshot.
+            - name: snapshot
+              image: registry.k8s.io/etcd:3.6.8-0
+              command:
+                - etcdctl
+                - --endpoints=https://127.0.0.1:2379
+                - --cacert=/etc/kubernetes/pki/etcd/ca.crt
+                - --cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt
+                - --key=/etc/kubernetes/pki/etcd/healthcheck-client.key
+                - snapshot
+                - save
+                - /work/snapshot.db
+              volumeMounts:
+                - { name: pki, mountPath: /etc/kubernetes/pki, readOnly: true }
+                - { name: work, mountPath: /work }
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits: { memory: 256Mi }
+          containers:
+            # Names the files, copies the certificates, and prunes old backups.
+            - name: store
+              image: docker.io/library/busybox:1.37.0
+              env:
+                - name: NODE_NAME
+                  valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+              command:
+                - sh
+                - -euc
+                - |
+                  umask 077
+                  ts=$(date -u +%Y%m%dT%H%M%SZ)
+                  mv /work/snapshot.db "/backups/etcd-$NODE_NAME-$ts.db"
+                  tar czf "/backups/pki-$NODE_NAME-$ts.tar.gz" -C /etc/kubernetes pki
+                  for prefix in etcd pki; do
+                    ls -1t /backups/$prefix-* | tail -n +9 | xargs -r rm -f --
+                  done
+                  ls -lh /backups
+              volumeMounts:
+                - { name: pki, mountPath: /etc/kubernetes/pki, readOnly: true }
+                - { name: work, mountPath: /work }
+                - { name: backups, mountPath: /backups }
+              resources:
+                requests: { cpu: 10m, memory: 16Mi }
+                limits: { memory: 64Mi }
+          volumes:
+            - name: pki
+              hostPath: { path: /etc/kubernetes/pki, type: Directory }
+            - name: backups
+              hostPath: { path: /var/backups/etcd, type: DirectoryOrCreate }
+            - name: work
+              emptyDir: {}

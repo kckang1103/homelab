@@ -1,0 +1,8 @@
+# This repo is public. Backups, keys and kubeconfigs live in ~/homelab, never here.
+*.db
+*.key
+*.pem
+*.tar.gz
+*kubeconfig*
+*.conf
+.DS_Store
